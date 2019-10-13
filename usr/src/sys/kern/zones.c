@@ -27,14 +27,93 @@ struct rwlock zone_lock = RWLOCK_INITIALIZER("zone_lock");
 int queue_size = 0;
 
 struct zone_entry *
-get_zone_by_name(const char *zonename) {
+get_zone_by_name(const char *zonename)
+{
 	struct zone_entry *zentry;
+
+	rw_enter_read(&zone_lock);
 	TAILQ_FOREACH(zentry, &zone_entries, entry) {
 		if (strcmp(zonename, zentry->zname) == 0) {
+			rw_exit_read(&zone_lock);
 			return (zentry);
 		}
 	}
+	rw_exit_read(&zone_lock);
 	return (NULL);
+}
+
+struct zone_entry *
+get_zone_by_id(zoneid_t id)
+{
+	struct zone_entry *zentry;
+
+	rw_enter_read(&zone_lock);
+	TAILQ_FOREACH(zentry, &zone_entries, entry) {
+		if (zentry->zid == id) {
+			rw_exit_read(&zone_lock);
+			return (zentry);
+		}
+	}
+	rw_exit_read(&zone_lock);
+	return (NULL);
+}
+
+zoneid_t
+get_next_available_id(void)
+{
+	struct zone_entry *zentry;
+	int temp, n;
+	int *ids;
+
+	// printf("queue-----\n");
+	// TAILQ_FOREACH(zentry, &zone_entries, entry) {
+	// 	printf("elem: %s %i\n", zentry->zname, zentry->zid);
+	// }
+	// printf("queue-----\n");
+
+	ids = malloc(sizeof(int) * queue_size, M_PROC, M_WAITOK);
+
+	n = 0;
+	rw_enter_read(&zone_lock);
+	TAILQ_FOREACH(zentry, &zone_entries, entry) {
+		ids[n] = zentry->zid;
+		n++;
+	}
+	rw_exit_read(&zone_lock);
+
+	for (int i = 0; i < n; i++) {
+		for (int j = 0; j < n; j++) {
+			if (ids[i] < ids[j]) {
+				temp = ids[i];
+				ids[i] = ids[j];
+				ids[j] = temp;
+			}
+		}
+	}
+
+	// for (int i = 0; i < n; i++) {
+	// 	printf("sorted ids: %i\n", ids[i]);
+	// }
+
+	for (int i = 1; i < n; i++) {
+		if (ids[i] - ids[i - 1] != 1) {
+			// printf("available id (gap) %i\n", i + 1);
+			return (i + 1);
+		}
+	}
+	// printf("available id %i\n", n + 1);
+	return (n + 1);
+
+	// index = 1;
+	// TAILQ_FOREACH(zentry, &zone_entries, entry) {
+	// 	if (zentry->zid != ids[index - 1]) {
+	// 		printf("a NEXT AVAILABLE ID AT %i\n", index);
+	// 		return (index);
+	// 	}
+	// 	index++;
+	// }
+	// printf("b NEXT AVAILABLE ID AT %i\n", index);
+	// return index - 1;
 }
 
 int
@@ -46,11 +125,13 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 		syscallarg(const char *) zonename;
 	} */ *uap = v;
 
-	struct zone_entry *z_entry;
+	struct zone_entry *zentry;
 	const char *zname;
 	// char zname_buf[MAXZONENAMELEN];
 	int zname_len;
+	size_t done;
 
+	*retval = -1;
 	zname = SCARG(uap, zonename);
 	zname_len = strlen(zname);
 	
@@ -75,20 +156,20 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 
 	/* EINVAL the name of the zone contains invalid characters */
 
-	z_entry = malloc(sizeof(struct zone_entry), M_PROC, M_WAITOK);
-	z_entry->zid = queue_size;
-	z_entry->zname =
+	zentry = malloc(sizeof(struct zone_entry), M_PROC, M_WAITOK);
+	zentry->zid = get_next_available_id();
+	zentry->zname =
 	    malloc((zname_len + 1) * sizeof(char), M_PROC, M_WAITOK);
-	memcpy(z_entry->zname, zname, zname_len + 1);
+	copyinstr(zname, zentry->zname, zname_len + 1, &done);
 
-	printf("zone created: %s %i\n", z_entry->zname, z_entry->zid);
+	printf("zone created: %s %i\n", zentry->zname, zentry->zid);
 
 	rw_enter_write(&zone_lock);
-	TAILQ_INSERT_TAIL(&zone_entries, z_entry, entry);
+	TAILQ_INSERT_TAIL(&zone_entries, zentry, entry);
 	queue_size++;
 	rw_exit_write(&zone_lock);
 
-	*retval = z_entry->zid;
+	*retval = zentry->zid;
 
 	// rw_enter_read(&zone_lock);
 	// struct zone_entry *e = TAILQ_FIRST(&zone_entries);
