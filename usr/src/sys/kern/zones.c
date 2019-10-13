@@ -9,6 +9,7 @@
 #include <sys/mount.h>
 #include <sys/atomic.h>
 #include <sys/syscallargs.h>
+#include <sys/sysctl.h>
 
 #include <sys/_zones.h>
 #include <sys/zones.h>
@@ -199,6 +200,30 @@ int
 sys_zone_destroy(struct proc *p, void *v, register_t *retval)
 {
     	printf("___________________%s!\n", __func__);
+
+	struct sys_zone_destroy_args /* {
+		syscallarg(zoneid_t) z;
+	} */ *uap = v;
+
+	struct zone_entry *zentry;
+	*retval = -1;
+	/* EPERM the current program is not in the global zone */
+	/* EPERM the current user is not root */
+	/* ESRCH the specified zone does not exist */
+	if ((zentry = get_zone_by_id(SCARG(uap, z))) == NULL) {
+		return (ESRCH);
+	}
+	/* EBUSY the specified zone is still in use, ie, a process is still running in the zone */
+
+	printf("zone destroyed: %s %i\n", zentry->zname, zentry->zid);
+
+	rw_enter_write(&zone_lock);
+	free(zentry->zname, M_PROC, M_WAITOK);
+	TAILQ_REMOVE(&zone_entries, zentry, entry);
+	queue_size--;
+	rw_exit_write(&zone_lock);
+
+	*retval = 0;
     	return (0);
 }
 
@@ -206,6 +231,32 @@ int
 sys_zone_enter(struct proc *p, void *v, register_t *retval)
 {
     	printf("___________________%s!\n", __func__);
+
+	struct sys_zone_destroy_args /* {
+		syscallarg(zoneid_t) z;
+	} */ *uap = v;
+
+	struct zone_entry *zentry;
+	int mib[2];
+
+	/* EPERM the current program is not in the global zone */
+	/* EPERM the current user is not root */
+	/* ESRCH the specified zone does not exist */
+	if ((zentry = get_zone_by_id(SCARG(uap, z))) == NULL) {
+		return (ESRCH);
+	}
+	printf("entering %i\n", zentry->zid);
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_PROC;
+	struct kinfo_proc kinfo, kinfo_updated;
+	// memcpy(kinfo_updated, &kinfo, sizeof(kinfo_proc));
+	kinfo_updated = kinfo;
+	kinfo_updated.p_zoneid = zentry->zid;
+	size_t len;
+	if (kern_sysctl(mib, 2, &kinfo, &len, &kinfo_updated, sizeof(struct kinfo_proc), p) == -1) {
+		printf("sysctl err\n");
+	}
+	printf("proc: %i %i %i\n", kinfo.p_zoneid, kinfo.p_pid, kinfo.p_uid);
     	return (0);
 }
 
