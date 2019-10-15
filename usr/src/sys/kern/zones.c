@@ -120,7 +120,7 @@ get_next_available_id(void)
 int
 sys_zone_create(struct proc *p, void *v, register_t *retval)
 {
-    	printf("___________________%s!\n", __func__);
+    	printf("%s!\n", __func__);
 	
 	struct sys_zone_create_args /* {
 		syscallarg(const char *) zonename;
@@ -172,34 +172,13 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 
 	*retval = zentry->zid;
 
-	// rw_enter_read(&zone_lock);
-	// struct zone_entry *e = TAILQ_FIRST(&zone_entries);
-
-	// printf("FIRST: %i %s\n", e->zid, e->zname);
-	// rw_exit_read(&zone_lock);
-	
-	// rw_enter_read(&zone_lock);
-	// struct zone_entry *e2 = TAILQ_NEXT(e, entry);
-	// printf("works!!\n");
-	// printf("LAST: %i %s\n", e2->zid, e2->zname);
-	// rw_exit_read(&zone_lock);
-
-	// struct zone_entry *e;
-	// TAILQ_FOREACH(e, &zone_entries, entry) {
-	// 	// if (i >= 5) {
-	// 	// 	printf("reached 5\n");
-	// 	// 	return 0;
-	// 	// }
-	// 	printf("q: %i %s\n", e->zid, e->zname);
-	// }
-
     	return (0);
 }
 
 int
 sys_zone_destroy(struct proc *p, void *v, register_t *retval)
 {
-    	printf("___________________%s!\n", __func__);
+    	printf("%s!\n", __func__);
 
 	struct sys_zone_destroy_args /* {
 		syscallarg(zoneid_t) z;
@@ -230,7 +209,7 @@ sys_zone_destroy(struct proc *p, void *v, register_t *retval)
 int
 sys_zone_enter(struct proc *p, void *v, register_t *retval)
 {
-    	printf("___________________%s!\n", __func__);
+    	printf("%s!\n", __func__);
 
 	struct sys_zone_destroy_args /* {
 		syscallarg(zoneid_t) z;
@@ -263,20 +242,110 @@ sys_zone_enter(struct proc *p, void *v, register_t *retval)
 int
 sys_zone_list(struct proc *p, void *v, register_t *retval)
 {
-    	printf("___________________%s!\n", __func__);
+    	printf("%s!\n", __func__);
+
+	struct sys_zone_list_args /* {
+		syscallarg(zoneid_t *) zs;
+		syscallarg(size_t *) nzs;
+	} */ *uap = v;
+
+	// struct zone_entry *zentry;
+	zoneid_t *ids;
+	zoneid_t *zs_in;
+	int n, nzs_in;
+
+	zs_in = SCARG(uap, zs);
+	copyin(SCARG(uap, nzs), &nzs_in, sizeof(size_t *));
+
+	/* EFAULT zs or nzs point to a bad address */
+	/* ERANGE if the number at nzs is less than the number of running zones in the system */
+
+	// ids = malloc(sizeof(zoneid_t) * queue_size, M_PROC, M_WAITOK);
+	// n = 0;
+	// rw_enter_read(&zone_lock);
+	// TAILQ_FOREACH(zentry, &zone_entries, entry) {
+	// 	ids[n] = zentry->zid;
+	// 	n++;
+	// }
+	// rw_exit_read(&zone_lock);
+
+	n = 3;
+	ids = mallocarray(n, sizeof(zoneid_t), M_TEMP, M_WAITOK);
+	ids[0] = 1;
+	ids[1] = 2;
+	ids[2] = 3;
+	for (int i = 0; i < n; i++) {
+		printf("ids: %i\n", ids[i]);
+	}
+
+	int err = copyout(ids, zs_in, sizeof(zoneid_t) * n);
+	free(ids, M_TEMP, sizeof(zoneid_t) * n);
+	printf("err1: %i\n", err);
+	err = copyout(&n, SCARG(uap, nzs), sizeof(size_t *));
+	printf("err2: %i\n", err);
     	return (0);
 }
 
 int
 sys_zone_name(struct proc *p, void *v, register_t *retval)
 {
-    	printf("___________________%s!\n", __func__);
+    	printf("%s!\n", __func__);
+
+	struct sys_zone_name_args /* {
+		syscallarg(zoneid_t) z;
+		syscallarg(char *) name;
+		syscallarg(size_t) namelen;
+	} */ *uap = v;
+	struct zone_entry *zentry;
+	zoneid_t zid;
+
+	zid = SCARG(uap, z);
+
+	if (zid == -1) {
+		// return current zone id;
+		return (0);
+	}
+
+	/* ESRCH The specified zone does not exist */
+	if ((zentry = get_zone_by_id(zid)) == NULL) {
+		return (ESRCH);
+	}
+	/* ESRCH The specified zone is not visible in a non-global zone */
+	/* EFAULT name refers to a bad memory address */
+	/* ENAMETOOLONG The requested name is longer than namelen bytes. */
+
+	copyoutstr(zentry->zname, SCARG(uap, name), SCARG(uap, namelen), NULL);
+
     	return (0);
 }
 
 int
 sys_zone_lookup(struct proc *p, void *v, register_t *retval)
 {
-    	printf("___________________%s!\n", __func__);
+    	printf("%s!\n", __func__);
+
+	struct sys_zone_lookup_args /* {
+		syscallarg(char *) name;
+	} */ *uap = v;
+	struct zone_entry *zentry;
+	const char *zname;
+	
+	zname = SCARG(uap, name);
+
+	if (zname == NULL) {
+		*retval = p->p_p->ps_pid;
+		return (0);
+	}
+
+	/* ESRCH The specified zone does not exist */
+	if ((zentry = get_zone_by_name(SCARG(uap, name))) == NULL) {
+		return (ESRCH);
+	}
+	/* ESRCH The specified zone is not visible in a non-global zone */
+	/* EFAULT name refers to a bad memory address */
+	/* ENAMETOOLONG the name of the zone exceeds MAXZONENAMELEN */
+
+	*retval = zentry->zid;
+
     	return (0);
 }
