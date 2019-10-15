@@ -25,7 +25,7 @@ struct zone_list zone_entries = TAILQ_HEAD_INITIALIZER(zone_entries);
 
 struct rwlock zone_lock = RWLOCK_INITIALIZER("zone_lock");
 
-int queue_size = 0;
+int queue_size = 1;
 
 struct zone_entry *
 get_zone_by_name(const char *zonename)
@@ -249,36 +249,25 @@ sys_zone_list(struct proc *p, void *v, register_t *retval)
 		syscallarg(size_t *) nzs;
 	} */ *uap = v;
 
-	// struct zone_entry *zentry;
+	struct zone_entry *zentry;
 	zoneid_t *ids;
-	zoneid_t *zs_in;
 	int n, nzs_in;
 
-	zs_in = SCARG(uap, zs);
 	copyin(SCARG(uap, nzs), &nzs_in, sizeof(size_t *));
 
 	/* EFAULT zs or nzs point to a bad address */
 	/* ERANGE if the number at nzs is less than the number of running zones in the system */
 
-	// ids = malloc(sizeof(zoneid_t) * queue_size, M_PROC, M_WAITOK);
-	// n = 0;
-	// rw_enter_read(&zone_lock);
-	// TAILQ_FOREACH(zentry, &zone_entries, entry) {
-	// 	ids[n] = zentry->zid;
-	// 	n++;
-	// }
-	// rw_exit_read(&zone_lock);
-
-	n = 3;
-	ids = mallocarray(n, sizeof(zoneid_t), M_TEMP, M_WAITOK);
-	ids[0] = 1;
-	ids[1] = 2;
-	ids[2] = 3;
-	for (int i = 0; i < n; i++) {
-		printf("ids: %i\n", ids[i]);
+	ids = malloc(sizeof(zoneid_t) * queue_size, M_PROC, M_WAITOK);
+	n = 0;
+	rw_enter_read(&zone_lock);
+	TAILQ_FOREACH(zentry, &zone_entries, entry) {
+		ids[n] = zentry->zid;
+		n++;
 	}
+	rw_exit_read(&zone_lock);
 
-	int err = copyout(ids, zs_in, sizeof(zoneid_t) * n);
+	int err = copyout(ids, SCARG(uap, zs), sizeof(zoneid_t) * n);
 	free(ids, M_TEMP, sizeof(zoneid_t) * n);
 	printf("err1: %i\n", err);
 	err = copyout(&n, SCARG(uap, nzs), sizeof(size_t *));
