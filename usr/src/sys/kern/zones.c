@@ -66,12 +66,6 @@ get_next_available_id(void)
 	int temp, n;
 	int *ids;
 
-	// printf("queue-----\n");
-	// TAILQ_FOREACH(zentry, &zone_entries, entry) {
-	// 	printf("elem: %s %i\n", zentry->zname, zentry->zid);
-	// }
-	// printf("queue-----\n");
-
 	ids = malloc(sizeof(int) * queue_size, M_PROC, M_WAITOK);
 
 	n = 0;
@@ -92,29 +86,24 @@ get_next_available_id(void)
 		}
 	}
 
-	// for (int i = 0; i < n; i++) {
-	// 	printf("sorted ids: %i\n", ids[i]);
-	// }
-
 	for (int i = 1; i < n; i++) {
 		if (ids[i] - ids[i - 1] != 1) {
-			// printf("available id (gap) %i\n", i + 1);
 			return (i + 1);
 		}
 	}
-	// printf("available id %i\n", n + 1);
 	return (n + 1);
+}
 
-	// index = 1;
-	// TAILQ_FOREACH(zentry, &zone_entries, entry) {
-	// 	if (zentry->zid != ids[index - 1]) {
-	// 		printf("a NEXT AVAILABLE ID AT %i\n", index);
-	// 		return (index);
-	// 	}
-	// 	index++;
-	// }
-	// printf("b NEXT AVAILABLE ID AT %i\n", index);
-	// return index - 1;
+int
+in_global_zone(struct proc *p)
+{
+	return (p->p_p->zone_id == 0);
+}
+
+int
+is_root_user(struct proc *p)
+{
+        return (suser(p) == 0);
 }
 
 int
@@ -128,11 +117,8 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 
 	struct zone_entry *zentry;
 	const char *zname;
-	// char zname_buf[MAXZONENAMELEN];
 	int zname_len;
-	size_t done;
 
-	*retval = -1;
 	zname = SCARG(uap, zonename);
 	zname_len = strlen(zname);
 	
@@ -143,6 +129,9 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 
 	/* EPERM the current program is not in the global zone */
 	/* EPERM the current user is not root */
+	if (!in_global_zone(p) || !is_root_user(p)) {
+		return (EPERM); 
+	}
 
 	/* EEXIST a zone with the specified name already exists */
 	if (get_zone_by_name(zname) != NULL) {
@@ -153,7 +142,6 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 	if (queue_size >= MAXZONES) {
 		return (ERANGE);
 	}
-	/* EFAULT zonename points to a bad address */
 
 	/* EINVAL the name of the zone contains invalid characters */
 
@@ -161,7 +149,13 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 	zentry->zid = get_next_available_id();
 	zentry->zname =
 	    malloc((zname_len + 1) * sizeof(char), M_PROC, M_WAITOK);
-	copyinstr(zname, zentry->zname, zname_len + 1, &done);
+	
+	if (copyinstr(zname, zentry->zname, zname_len + 1, NULL)) {
+		free(zentry->zname, M_PROC, M_WAITOK);
+		free(zentry, M_PROC, M_WAITOK);
+		return (EFAULT);
+	}
+
 
 	printf("zone created: %s %i\n", zentry->zname, zentry->zid);
 
@@ -186,13 +180,19 @@ sys_zone_destroy(struct proc *p, void *v, register_t *retval)
 
 	struct zone_entry *zentry;
 	*retval = -1;
+
 	/* EPERM the current program is not in the global zone */
 	/* EPERM the current user is not root */
+	if (!in_global_zone(p) || !is_root_user(p)) {
+		return (EPERM); 
+	}
+
 	/* ESRCH the specified zone does not exist */
 	if ((zentry = get_zone_by_id(SCARG(uap, z))) == NULL) {
 		return (ESRCH);
 	}
-	/* EBUSY the specified zone is still in use, ie, a process is still running in the zone */
+	/* EBUSY the specified zone is still in use, */
+	/* ie, a process is still running in the zone */
 
 	printf("zone destroyed: %s %i\n", zentry->zname, zentry->zid);
 
@@ -216,26 +216,22 @@ sys_zone_enter(struct proc *p, void *v, register_t *retval)
 	} */ *uap = v;
 
 	struct zone_entry *zentry;
-	int mib[2];
+
+	// TODO allow entering global zone.
 
 	/* EPERM the current program is not in the global zone */
 	/* EPERM the current user is not root */
+	if (!in_global_zone(p) || !is_root_user(p)) {
+		return (EPERM); 
+	}
+
 	/* ESRCH the specified zone does not exist */
 	if ((zentry = get_zone_by_id(SCARG(uap, z))) == NULL) {
 		return (ESRCH);
 	}
-	printf("entering %i\n", zentry->zid);
-	mib[0] = CTL_KERN;
-	mib[1] = KERN_PROC;
-	struct kinfo_proc kinfo, kinfo_updated;
-	// memcpy(kinfo_updated, &kinfo, sizeof(kinfo_proc));
-	kinfo_updated = kinfo;
-	kinfo_updated.p_zoneid = zentry->zid;
-	size_t len;
-	if (kern_sysctl(mib, 2, &kinfo, &len, &kinfo_updated, sizeof(struct kinfo_proc), p) == -1) {
-		printf("sysctl err\n");
-	}
-	printf("proc: %i %i %i\n", kinfo.p_zoneid, kinfo.p_pid, kinfo.p_uid);
+
+	p->p_p->zone_id = zentry->zid;
+
     	return (0);
 }
 
@@ -250,29 +246,58 @@ sys_zone_list(struct proc *p, void *v, register_t *retval)
 	} */ *uap = v;
 
 	struct zone_entry *zentry;
-	zoneid_t *ids;
-	int n, nzs_in;
-
-	copyin(SCARG(uap, nzs), &nzs_in, sizeof(size_t *));
+	zoneid_t *ids, zs_in;
+	size_t nzs_in, n;
 
 	/* EFAULT zs or nzs point to a bad address */
-	/* ERANGE if the number at nzs is less than the number of running zones in the system */
-
-	ids = malloc(sizeof(zoneid_t) * queue_size, M_PROC, M_WAITOK);
+	if (copyin(SCARG(uap, zs), &zs_in, sizeof(zoneid_t *)) ||
+	    copyin(SCARG(uap, nzs), &nzs_in, sizeof(size_t *))) {
+		return (EFAULT);
+	}
+	printf("nzs: %zu\n", nzs_in);
 	n = 0;
-	rw_enter_read(&zone_lock);
-	TAILQ_FOREACH(zentry, &zone_entries, entry) {
-		ids[n] = zentry->zid;
+	if (in_global_zone(p)) {
+		printf("in global zone\n");
+		ids = malloc(sizeof(zoneid_t) * (queue_size + 1),
+		    M_TEMP, M_WAITOK);
+		ids[0] = 0;
+		n++;
+		rw_enter_read(&zone_lock);
+		TAILQ_FOREACH(zentry, &zone_entries, entry) {
+			ids[n] = zentry->zid;
+			n++;
+		}
+		rw_exit_read(&zone_lock);
+	} else {
+		printf("in zone %i\n", p->p_p->zone_id);
+		ids = malloc(sizeof(zoneid_t), M_TEMP, M_WAITOK);
+		if ((zentry = get_zone_by_id(p->p_p->zone_id)) == NULL) {
+			printf("zone not found?\n");
+		}
+		ids[0] = zentry->zid;
 		n++;
 	}
-	rw_exit_read(&zone_lock);
 
-	int err = copyout(ids, SCARG(uap, zs), sizeof(zoneid_t) * n);
-	free(ids, M_TEMP, sizeof(zoneid_t) * n);
-	printf("err1: %i\n", err);
-	err = copyout(&n, SCARG(uap, nzs), sizeof(size_t *));
-	printf("err2: %i\n", err);
-    	return (0);
+	/* ERANGE if the number at nzs is less than the number of running */
+	/* zones in the system */
+	printf("%zu %zu\n", nzs_in, n);
+	if (nzs_in < n) {
+		free(ids, M_TEMP, M_WAITOK);
+		return (ERANGE);
+	}
+	
+	if (copyout(ids, SCARG(uap, zs), sizeof(zoneid_t) * n)) {
+		free(ids, M_TEMP, M_WAITOK);
+		return (EFAULT);
+	}
+	
+	free(ids, M_TEMP, M_WAITOK);
+    	
+	if (copyout(&n, SCARG(uap, nzs), sizeof(size_t *))) {
+		return (EFAULT);
+	}
+
+	return (0);
 }
 
 int
@@ -290,21 +315,28 @@ sys_zone_name(struct proc *p, void *v, register_t *retval)
 
 	zid = SCARG(uap, z);
 
-	if (zid == -1) {
-		// return current zone id;
+	if (zid == 0) {
+		char g[MAXZONENAMELEN] = "global";
+		if (copyoutstr(g, SCARG(uap, name), SCARG(uap, namelen), NULL)) {
+			return (EFAULT);
+		}
 		return (0);
 	}
 
+	if (zid == -1) {
+		zentry = get_zone_by_id(p->p_p->zone_id);
+	} else {
+		zentry = get_zone_by_id(zid);
+	}
+
 	/* ESRCH The specified zone does not exist */
-	if ((zentry = get_zone_by_id(zid)) == NULL) {
+	if (zentry == NULL) {
 		return (ESRCH);
 	}
 	/* ESRCH The specified zone is not visible in a non-global zone */
 	/* EFAULT name refers to a bad memory address */
 	/* ENAMETOOLONG The requested name is longer than namelen bytes. */
-
 	copyoutstr(zentry->zname, SCARG(uap, name), SCARG(uap, namelen), NULL);
-
     	return (0);
 }
 
@@ -318,8 +350,10 @@ sys_zone_lookup(struct proc *p, void *v, register_t *retval)
 	} */ *uap = v;
 	struct zone_entry *zentry;
 	const char *zname;
+	int zname_len;
 	
 	zname = SCARG(uap, name);
+	zname_len = strlen(zname);
 
 	if (zname == NULL) {
 		*retval = p->p_p->ps_pid;
@@ -327,12 +361,18 @@ sys_zone_lookup(struct proc *p, void *v, register_t *retval)
 	}
 
 	/* ESRCH The specified zone does not exist */
-	if ((zentry = get_zone_by_name(SCARG(uap, name))) == NULL) {
+	if ((zentry = get_zone_by_name(zname)) == NULL) {
 		return (ESRCH);
 	}
+
 	/* ESRCH The specified zone is not visible in a non-global zone */
+
 	/* EFAULT name refers to a bad memory address */
+
 	/* ENAMETOOLONG the name of the zone exceeds MAXZONENAMELEN */
+	if (zname_len > MAXZONENAMELEN) {
+		return (ENAMETOOLONG);
+	}
 
 	*retval = zentry->zid;
 
