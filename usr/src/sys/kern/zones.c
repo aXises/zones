@@ -17,7 +17,7 @@
 struct zone_entry {
 	TAILQ_ENTRY(zone_entry) entry;
 	zoneid_t zid;
-	char *zname;
+	char zname[MAXZONENAMELEN];
 };
 TAILQ_HEAD(zone_list, zone_entry);
 
@@ -25,7 +25,7 @@ struct zone_list zone_entries = TAILQ_HEAD_INITIALIZER(zone_entries);
 
 struct rwlock zone_lock = RWLOCK_INITIALIZER("zone_lock");
 
-int queue_size = 1;
+size_t queue_size = 1;
 
 struct zone_entry *
 get_zone_by_name(const char *zonename)
@@ -135,15 +135,13 @@ is_root_user(struct proc *p)
 int
 sys_zone_create(struct proc *p, void *v, register_t *retval)
 {
-    	printf("%s!\n", __func__);
-	
 	struct sys_zone_create_args /* {
 		syscallarg(const char *) zonename;
 	} */ *uap = v;
 
 	struct zone_entry *zentry;
 	const char *zname;
-	int zname_len;
+	size_t zname_len;
 
 	zname = SCARG(uap, zonename);
 	zname_len = strlen(zname);
@@ -176,17 +174,11 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 
 	zentry = malloc(sizeof(struct zone_entry), M_PROC, M_WAITOK);
 	zentry->zid = get_next_available_id();
-	zentry->zname =
-	    malloc((zname_len + 1) * sizeof(char), M_PROC, M_WAITOK);
 	
 	if (copyinstr(zname, zentry->zname, zname_len + 1, NULL)) {
-		free(zentry->zname, M_PROC, M_WAITOK);
-		free(zentry, M_PROC, M_WAITOK);
+		free(zentry, M_PROC, sizeof(struct zone_entry));
 		return (EFAULT);
 	}
-
-
-	printf("zone created: %s %i\n", zentry->zname, zentry->zid);
 
 	rw_enter_write(&zone_lock);
 	TAILQ_INSERT_TAIL(&zone_entries, zentry, entry);
@@ -201,8 +193,6 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 int
 sys_zone_destroy(struct proc *p, void *v, register_t *retval)
 {
-    	printf("%s!\n", __func__);
-
 	struct sys_zone_destroy_args /* {
 		syscallarg(zoneid_t) z;
 	} */ *uap = v;
@@ -230,18 +220,17 @@ sys_zone_destroy(struct proc *p, void *v, register_t *retval)
 		p_zid = pr->zone_id; 
 		if (p_zid != 0) {
 			if (p_zid == zentry->zid) {
-				printf("still busy - pid: %i zid: %i\n", pr->ps_pid, pr->zone_id);
 				return (EBUSY);
 			}
 		}
-		printf("pid: %i zid: %i\n", pr->ps_pid, pr->zone_id);
 	}
 
 	rw_enter_write(&zone_lock);
-	free(zentry->zname, M_PROC, M_WAITOK);
 	TAILQ_REMOVE(&zone_entries, zentry, entry);
 	queue_size--;
 	rw_exit_write(&zone_lock);
+
+	free(zentry, M_PROC, sizeof(struct zone_entry));
 
     	return (0);
 }
@@ -249,8 +238,6 @@ sys_zone_destroy(struct proc *p, void *v, register_t *retval)
 int
 sys_zone_enter(struct proc *p, void *v, register_t *retval)
 {
-    	printf("%s!\n", __func__);
-
 	struct sys_zone_destroy_args /* {
 		syscallarg(zoneid_t) z;
 	} */ *uap = v;
@@ -276,8 +263,6 @@ sys_zone_enter(struct proc *p, void *v, register_t *retval)
 int
 sys_zone_list(struct proc *p, void *v, register_t *retval)
 {
-    	printf("%s!\n", __func__);
-
 	struct sys_zone_list_args /* {
 		syscallarg(zoneid_t *) zs;
 		syscallarg(size_t *) nzs;
@@ -292,11 +277,10 @@ sys_zone_list(struct proc *p, void *v, register_t *retval)
 	    copyin(SCARG(uap, nzs), &nzs_in, sizeof(size_t *))) {
 		return (EFAULT);
 	}
-	printf("nzs: %zu\n", nzs_in);
+
 	n = 0;
 	if (in_global_zone(p)) {
-		printf("in global zone\n");
-		ids = malloc(sizeof(zoneid_t) * (queue_size + 1),
+		ids = malloc(sizeof(zoneid_t) * (queue_size),
 		    M_TEMP, M_WAITOK);
 		ids[0] = 0;
 		n++;
@@ -307,30 +291,25 @@ sys_zone_list(struct proc *p, void *v, register_t *retval)
 		}
 		rw_exit_read(&zone_lock);
 	} else {
-		printf("in zone %i\n", p->p_p->zone_id);
 		ids = malloc(sizeof(zoneid_t), M_TEMP, M_WAITOK);
-		if ((zentry = get_zone_by_id(p->p_p->zone_id)) == NULL) {
-			printf("zone not found?\n");
-		}
 		ids[0] = zentry->zid;
 		n++;
 	}
 
 	/* ERANGE if the number at nzs is less than the number of running */
 	/* zones in the system */
-	printf("%zu %zu\n", nzs_in, n);
 	if (nzs_in < n) {
-		free(ids, M_TEMP, M_WAITOK);
+		free(ids, M_TEMP, sizeof(zoneid_t) * n);
 		return (ERANGE);
 	}
 	
 	if (copyout(ids, SCARG(uap, zs), sizeof(zoneid_t) * n)) {
-		free(ids, M_TEMP, M_WAITOK);
+		free(ids, M_TEMP, sizeof(zoneid_t) * n);
 		return (EFAULT);
 	}
-	
-	free(ids, M_TEMP, M_WAITOK);
-    	
+
+	free(ids, M_TEMP, sizeof(zoneid_t) * n);
+
 	if (copyout(&n, SCARG(uap, nzs), sizeof(size_t *))) {
 		return (EFAULT);
 	}
@@ -341,8 +320,6 @@ sys_zone_list(struct proc *p, void *v, register_t *retval)
 int
 sys_zone_name(struct proc *p, void *v, register_t *retval)
 {
-    	printf("%s!\n", __func__);
-
 	struct sys_zone_name_args /* {
 		syscallarg(zoneid_t) z;
 		syscallarg(char *) name;
@@ -374,7 +351,7 @@ sys_zone_name(struct proc *p, void *v, register_t *retval)
 	}
 
 	if (zid == 0) {
-		if (copyoutstr(global_zname, zname, zname_len, NULL)) {
+		if (copyoutstr(global_zname, zname_in, zname_len, NULL)) {
 			return (EFAULT);
 		}
 		return (0);
@@ -382,7 +359,7 @@ sys_zone_name(struct proc *p, void *v, register_t *retval)
 
 	if (zid == -1) {
 		if (p->p_p->zone_id == 0) {
-			if (copyoutstr(global_zname, zname, zname_len, NULL)) {
+			if (copyoutstr(global_zname, zname_in, zname_len, NULL)) {
 				return (EFAULT);
 			}
 			return (0);
@@ -402,7 +379,7 @@ sys_zone_name(struct proc *p, void *v, register_t *retval)
 		return (ESRCH);
 	}
 
-	if (copyoutstr(zentry->zname, zname, zname_len, NULL)) {
+	if (copyoutstr(zentry->zname, zname_in, zname_len, NULL)) {
 		return (EFAULT);
 	}
 	
@@ -412,15 +389,14 @@ sys_zone_name(struct proc *p, void *v, register_t *retval)
 int
 sys_zone_lookup(struct proc *p, void *v, register_t *retval)
 {
-    	printf("%s!\n", __func__);
-
 	struct sys_zone_lookup_args /* {
 		syscallarg(char *) name;
 	} */ *uap = v;
+
 	struct zone_entry *zentry;
 	const char *zname_in;
 	char zname[MAXZONENAMELEN];
-	int zname_len;
+	size_t zname_len;
 
 	zname_in = SCARG(uap, name); 
 	
