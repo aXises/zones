@@ -95,13 +95,25 @@ get_next_available_id(void)
 }
 
 int
-is_valid_name(char *name)
+is_digit(char c)
+{
+	return ((c >= 48) && (c <= 57));
+}
+
+int
+is_alpha(char c)
+{
+	return (((c >= 65) && (c <= 90)) || ((c >= 97) && (c <= 122)));
+}
+
+int
+is_valid_name(const char *name)
 {
 	for (int i = 0; i < strlen(name); i++) {
 		if (name[i] == '-' || name[i] == '_') {
 			continue;
 		}
-		if (!isalpha(name[i]) || !isdigit(name[i])) {
+		if (!is_alpha(name[i]) && !is_digit(name[i])) {
 			return (0);
 		}
 	}
