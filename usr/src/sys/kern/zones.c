@@ -129,7 +129,7 @@ in_global_zone(struct proc *p)
 int
 is_root_user(struct proc *p)
 {
-        return (suser(p) == 0);
+	return (suser(p) == 0);
 }
 
 int
@@ -188,7 +188,7 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 
 	*retval = zentry->zid;
 
-    	return (0);
+	return (0);
 }
 
 int
@@ -236,7 +236,7 @@ sys_zone_destroy(struct proc *p, void *v, register_t *retval)
 
 	*retval = 0;
 
-    	return (0);
+	return (0);
 }
 
 int
@@ -264,7 +264,7 @@ sys_zone_enter(struct proc *p, void *v, register_t *retval)
 
 	*retval = 0;
 
-    	return (0);
+	return (0);
 }
 
 int
@@ -282,7 +282,7 @@ sys_zone_list(struct proc *p, void *v, register_t *retval)
 
 	/* EFAULT zs or nzs point to a bad address */
 	if (copyin(SCARG(uap, zs), &zs_in, sizeof(zoneid_t *)) ||
-	    copyin(SCARG(uap, nzs), &nzs_in, sizeof(size_t *))) {
+		copyin(SCARG(uap, nzs), &nzs_in, sizeof(size_t *))) {
 		return (EFAULT);
 	}
 
@@ -396,7 +396,7 @@ sys_zone_name(struct proc *p, void *v, register_t *retval)
 	}
 
 	*retval = 0;
-    	return (0);
+	return (0);
 }
 
 int
@@ -444,5 +444,5 @@ sys_zone_lookup(struct proc *p, void *v, register_t *retval)
 
 	*retval = zentry->zid;
 
-    	return (0);
+	return (0);
 }
