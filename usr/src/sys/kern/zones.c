@@ -143,6 +143,7 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 	const char *zname;
 	size_t zname_len;
 
+	*retval = -1;
 	zname = SCARG(uap, zonename);
 	zname_len = strlen(zname);
 	
@@ -200,6 +201,7 @@ sys_zone_destroy(struct proc *p, void *v, register_t *retval)
 	struct zone_entry *zentry;
 	struct process *pr;
 	zoneid_t zid, p_zid;
+	*retval = -1;
 
 	zid = SCARG(uap, z);
 
@@ -232,6 +234,8 @@ sys_zone_destroy(struct proc *p, void *v, register_t *retval)
 
 	free(zentry, M_PROC, sizeof(struct zone_entry));
 
+	*retval = 0;
+
     	return (0);
 }
 
@@ -243,6 +247,7 @@ sys_zone_enter(struct proc *p, void *v, register_t *retval)
 	} */ *uap = v;
 
 	struct zone_entry *zentry;
+	*retval = -1;
 
 	/* EPERM the current program is not in the global zone */
 	/* EPERM the current user is not root */
@@ -256,6 +261,8 @@ sys_zone_enter(struct proc *p, void *v, register_t *retval)
 	}
 
 	p->p_p->zone_id = zentry->zid;
+
+	*retval = 0;
 
     	return (0);
 }
@@ -271,6 +278,7 @@ sys_zone_list(struct proc *p, void *v, register_t *retval)
 	struct zone_entry *zentry;
 	zoneid_t *ids, zs_in;
 	size_t nzs_in, n;
+	*retval = -1;
 
 	/* EFAULT zs or nzs point to a bad address */
 	if (copyin(SCARG(uap, zs), &zs_in, sizeof(zoneid_t *)) ||
@@ -314,6 +322,7 @@ sys_zone_list(struct proc *p, void *v, register_t *retval)
 		return (EFAULT);
 	}
 
+	*retval = 0;
 	return (0);
 }
 
@@ -331,6 +340,7 @@ sys_zone_name(struct proc *p, void *v, register_t *retval)
 	zoneid_t zid;
 	size_t zname_len;
 	const char global_zname[MAXZONENAMELEN] = "global";
+	*retval = -1;
 
 	zid = SCARG(uap, z);
 	zname_in = SCARG(uap, name);
@@ -354,6 +364,7 @@ sys_zone_name(struct proc *p, void *v, register_t *retval)
 		if (copyoutstr(global_zname, zname_in, zname_len, NULL)) {
 			return (EFAULT);
 		}
+		*retval = 0;
 		return (0);
 	}
 
@@ -362,6 +373,7 @@ sys_zone_name(struct proc *p, void *v, register_t *retval)
 			if (copyoutstr(global_zname, zname_in, zname_len, NULL)) {
 				return (EFAULT);
 			}
+			*retval = 0;
 			return (0);
 		}
 		zentry = get_zone_by_id(p->p_p->zone_id);
@@ -382,7 +394,8 @@ sys_zone_name(struct proc *p, void *v, register_t *retval)
 	if (copyoutstr(zentry->zname, zname_in, zname_len, NULL)) {
 		return (EFAULT);
 	}
-	
+
+	*retval = 0;
     	return (0);
 }
 
@@ -397,6 +410,7 @@ sys_zone_lookup(struct proc *p, void *v, register_t *retval)
 	const char *zname_in;
 	char zname[MAXZONENAMELEN];
 	size_t zname_len;
+	*retval = -1;
 
 	zname_in = SCARG(uap, name); 
 	
