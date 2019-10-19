@@ -146,7 +146,7 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 	*retval = -1;
 	zname = SCARG(uap, zonename);
 	zname_len = strlen(zname);
-	
+
 	/* ENAMETOOLONG the name of the zone exceeds MAXZONENAMELEN */
 	if (zname_len > MAXZONENAMELEN) {
 		return (ENAMETOOLONG);
@@ -160,7 +160,7 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 	/* EPERM the current program is not in the global zone */
 	/* EPERM the current user is not root */
 	if (!in_global_zone(p) || !is_root_user(p)) {
-		return (EPERM); 
+		return (EPERM);
 	}
 
 	/* EEXIST a zone with the specified name already exists */
@@ -175,7 +175,7 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 
 	zentry = malloc(sizeof(struct zone_entry), M_PROC, M_WAITOK);
 	zentry->zid = get_next_available_id();
-	
+
 	if (copyinstr(zname, zentry->zname, zname_len + 1, NULL)) {
 		free(zentry, M_PROC, sizeof(struct zone_entry));
 		return (EFAULT);
@@ -208,7 +208,7 @@ sys_zone_destroy(struct proc *p, void *v, register_t *retval)
 	/* EPERM the current program is not in the global zone */
 	/* EPERM the current user is not root */
 	if (!in_global_zone(p) || !is_root_user(p)) {
-		return (EPERM); 
+		return (EPERM);
 	}
 
 	/* ESRCH the specified zone does not exist */
@@ -219,7 +219,7 @@ sys_zone_destroy(struct proc *p, void *v, register_t *retval)
 	/* EBUSY the specified zone is still in use, */
 	/* ie, a process is still running in the zone */
 	LIST_FOREACH(pr, &allprocess, ps_list) {
-		p_zid = pr->zone_id; 
+		p_zid = pr->zone_id;
 		if (p_zid != 0) {
 			if (p_zid == zentry->zid) {
 				return (EBUSY);
@@ -252,7 +252,7 @@ sys_zone_enter(struct proc *p, void *v, register_t *retval)
 	/* EPERM the current program is not in the global zone */
 	/* EPERM the current user is not root */
 	if (!in_global_zone(p) || !is_root_user(p)) {
-		return (EPERM); 
+		return (EPERM);
 	}
 
 	/* ESRCH the specified zone does not exist */
@@ -310,7 +310,7 @@ sys_zone_list(struct proc *p, void *v, register_t *retval)
 		free(ids, M_TEMP, sizeof(zoneid_t) * n);
 		return (ERANGE);
 	}
-	
+
 	if (copyout(ids, SCARG(uap, zs), sizeof(zoneid_t) * n)) {
 		free(ids, M_TEMP, sizeof(zoneid_t) * n);
 		return (EFAULT);
@@ -412,14 +412,14 @@ sys_zone_lookup(struct proc *p, void *v, register_t *retval)
 	size_t zname_len;
 	*retval = -1;
 
-	zname_in = SCARG(uap, name); 
-	
+	zname_in = SCARG(uap, name);
+
 	/* Process ID returned if name is NULL */
 	if (zname_in == NULL) {
 		*retval = p->p_p->ps_pid;
 		return (0);
 	}
-	
+
 	zname_len = strlen(zname_in);
 
 	/* ENAMETOOLONG the name of the zone exceeds MAXZONENAMELEN */
@@ -430,6 +430,11 @@ sys_zone_lookup(struct proc *p, void *v, register_t *retval)
 	/* EFAULT name refers to a bad memory address */
 	if (copyinstr(zname_in, zname, zname_len + 1, NULL)) {
 		return (EFAULT);
+	}
+
+	if (strcmp(zname, "global") == 0 && in_global_zone(p)) {
+		*retval = 0;
+		return (0);
 	}
 
 	/* ESRCH The specified zone does not exist */
