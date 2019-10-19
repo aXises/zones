@@ -11,14 +11,8 @@
 #include <sys/syscallargs.h>
 #include <sys/sysctl.h>
 
-#include <sys/_zones.h>
 #include <sys/zones.h>
 
-struct zone_entry {
-	TAILQ_ENTRY(zone_entry) entry;
-	zoneid_t zid;
-	char zname[MAXZONENAMELEN];
-};
 TAILQ_HEAD(zone_list, zone_entry);
 
 struct zone_list zone_entries = TAILQ_HEAD_INITIALIZER(zone_entries);
@@ -66,9 +60,14 @@ get_next_available_id(void)
 	int temp, n;
 	int *ids;
 
-	ids = malloc(sizeof(int) * queue_size, M_PROC, M_WAITOK);
+	if (queue_size < 2) {
+		return (1);
+	}
 
-	n = 0;
+	ids = malloc(sizeof(int) * queue_size, M_TEMP, M_WAITOK);
+
+	n = 1;
+	ids[0] = 0;
 	rw_enter_read(&zone_lock);
 	TAILQ_FOREACH(zentry, &zone_entries, entry) {
 		ids[n] = zentry->zid;
@@ -88,10 +87,12 @@ get_next_available_id(void)
 
 	for (int i = 1; i < n; i++) {
 		if (ids[i] - ids[i - 1] != 1) {
-			return (i + 1);
+			free(ids, M_TEMP, sizeof(int) * (queue_size));
+			return (i);
 		}
 	}
-	return (n + 1);
+	free(ids, M_TEMP, sizeof(int) * (queue_size));
+	return (n);
 }
 
 int
@@ -300,7 +301,7 @@ sys_zone_list(struct proc *p, void *v, register_t *retval)
 		rw_exit_read(&zone_lock);
 	} else {
 		ids = malloc(sizeof(zoneid_t), M_TEMP, M_WAITOK);
-		ids[0] = zentry->zid;
+		ids[0] = p->p_p->zone_id;
 		n++;
 	}
 
@@ -360,16 +361,8 @@ sys_zone_name(struct proc *p, void *v, register_t *retval)
 		return (ENAMETOOLONG);
 	}
 
-	if (zid == 0) {
-		if (copyoutstr(global_zname, zname_in, zname_len, NULL)) {
-			return (EFAULT);
-		}
-		*retval = 0;
-		return (0);
-	}
-
 	if (zid == -1) {
-		if (p->p_p->zone_id == 0) {
+		if (in_global_zone(p)) {
 			if (copyoutstr(global_zname, zname_in, zname_len, NULL)) {
 				return (EFAULT);
 			}
@@ -381,13 +374,16 @@ sys_zone_name(struct proc *p, void *v, register_t *retval)
 		zentry = get_zone_by_id(zid);
 	}
 
-	/* ESRCH The specified zone does not exist */
-	if (zentry == NULL) {
-		return (ESRCH);
+	if (in_global_zone(p) && zid == 0) {
+		if (copyoutstr(global_zname, zname_in, zname_len, NULL)) {
+			return (EFAULT);
+		}
+		*retval = 0;
+		return (0);
 	}
 
-	/* ESRCH The specified zone is not visible in a non-global zone */
-	if (!in_global_zone(p) && p->p_p->zone_id != zentry->zid) {
+	/* ESRCH The specified zone does not exist */
+	if (zentry == NULL) {
 		return (ESRCH);
 	}
 
