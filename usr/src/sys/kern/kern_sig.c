@@ -593,6 +593,18 @@ sys_kill(struct proc *cp, void *v, register_t *retval)
 			else
 				zombie = 1;
 		}
+		/* Non global zone */
+		if (cp->p_p->zone_id != 0) {
+			/* Only allow signal in current program zone */
+			if (cp->p_p->zone_id != pr->zone_id) {
+				return (ESRCH);
+			}
+		} else {
+			/* Non root user */
+			if (suser(cp) != 0 && pr->zone_id != 0) {
+				return (EPERM);
+			}
+		}
 		if (!cansignal(cp, pr, signum))
 			return (EPERM);
 
