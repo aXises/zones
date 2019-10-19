@@ -600,6 +600,9 @@ kern_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		    newp, newlen));
 #endif
 	case KERN_MAXCLUSTERS: {
+		if (p->p_p->zone_id != 0) {
+			return (EPERM);
+		}
 		int val = nmbclust;
 		error = sysctl_int(oldp, oldlenp, newp, newlen, &val);
 		if (error == 0 && val != nmbclust)
@@ -622,6 +625,9 @@ kern_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 	case KERN_CACHEPCT: {
 		u_int64_t dmapages;
 		int opct, pgs;
+		if (p->p_p->zone_id != 0) {
+			return (EPERM);
+		}
 		opct = bufcachepercent;
 		error = sysctl_int(oldp, oldlenp, newp, newlen,
 		    &bufcachepercent);
@@ -651,7 +657,9 @@ kern_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		return (sysctl_rdint(oldp, oldlenp, newp, net_livelocks));
 	case KERN_POOL_DEBUG: {
 		int old_pool_debug = pool_debug;
-
+		if (p->p_p->zone_id != 0) {
+			return (EPERM);
+		}
 		error = sysctl_int(oldp, oldlenp, newp, newlen,
 		    &pool_debug);
 		if (error == 0 && pool_debug != old_pool_debug)
