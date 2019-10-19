@@ -176,8 +176,13 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 
 	zentry = malloc(sizeof(struct zone_entry), M_PROC, M_WAITOK);
 	zentry->zid = get_next_available_id();
+	zentry->domainname[0] = '\0';
+	zentry->hostid = 0;
+	zentry->boottime = malloc(sizeof(struct timeval), M_PROC, M_WAITOK);
+	microtime(zentry->boottime);
 
-	if (copyinstr(zname, zentry->zname, zname_len + 1, NULL)) {
+	if (copyinstr(zname, zentry->zname, zname_len + 1, NULL)
+	    || copyinstr(zname, zentry->hostname, zname_len + 1, NULL)) {
 		free(zentry, M_PROC, sizeof(struct zone_entry));
 		return (EFAULT);
 	}

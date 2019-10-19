@@ -80,6 +80,7 @@
 #include <sys/mount.h>
 #include <sys/syscallargs.h>
 #include <sys/witness.h>
+#include <sys/zones.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -284,11 +285,14 @@ kern_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 {
 	int error, level, inthostid, stackgap;
 	dev_t dev;
+	struct zone_entry *zentry;
 	extern int somaxconn, sominconn;
 	extern int nosuidcoredump;
 	extern int maxlocksperuid;
 	extern int pool_debug;
 	extern int uvm_wxabort;
+
+	zentry = get_zone_by_id(p->p_p->zone_id);
 
 	/* all sysctl names at this level are terminal except a ton of them */
 	if (namelen != 1) {
@@ -364,28 +368,57 @@ kern_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		return (sysctl_int(oldp, oldlenp, newp, newlen,
 		    &allowkmem));
 	case KERN_HOSTNAME:
+		if (p->p_p->zone_id != 0) {
+			if (newp && suser(p) == 0) {
+				error = sysctl_tstring(oldp, oldlenp, newp,
+				    newlen, zentry->hostname,
+				    sizeof(zentry->hostname));
+				copyinstr(newp, zentry->hostname, newlen,
+				   NULL);
+				return (error);
+			}
+			error = sysctl_tstring(oldp, oldlenp, newp, newlen,
+			    zentry->hostname, sizeof(zentry->hostname));
+			return (error);
+		}
 		error = sysctl_tstring(oldp, oldlenp, newp, newlen,
 			hostname, sizeof(hostname));
 		if (newp && !error)
 			hostnamelen = newlen;
-		// if (p->p_p->zone_id == 0) {
-		// 	error = sysctl_tstring(oldp, oldlenp, newp, newlen,
-		// 	    "", sizeof(hostname));
-		// } else {
-		// 	error = sysctl_tstring(oldp, oldlenp, newp, newlen,
-		// 	    "", sizeof(hostname));
-		// }
-		// if (suser(p) == 0) {
-
-		// }
 		return (error);
 	case KERN_DOMAINNAME:
+		if (p->p_p->zone_id != 0) {
+			if (newp && suser(p) == 0) {
+				error = sysctl_tstring(oldp, oldlenp, newp,
+				    newlen, zentry->domainname,
+				    sizeof(zentry->domainname));
+				copyinstr(newp, zentry->domainname, newlen,
+				   NULL);
+				return (error);
+			}
+			error = sysctl_tstring(oldp, oldlenp, newp, newlen,
+			    zentry->domainname, sizeof(zentry->domainname));
+			return (error);
+		}
 		error = sysctl_tstring(oldp, oldlenp, newp, newlen,
 		    domainname, sizeof(domainname));
 		if (newp && !error)
 			domainnamelen = newlen;
 		return (error);
 	case KERN_HOSTID:
+		if (p->p_p->zone_id != 0) {
+			if (newp && suser(p) == 0) {
+				inthostid = zentry->hostid;
+				error = sysctl_int(oldp, oldlenp, newp, newlen,
+				    &inthostid);
+				copyin(newp, &zentry->hostid, newlen);
+				return (error);
+			}
+			inthostid = zentry->hostid;
+			error = sysctl_int(oldp, oldlenp, newp, newlen,
+			    &inthostid);
+			return (error);
+		}
 		inthostid = hostid;  /* XXX assumes sizeof long <= sizeof int */
 		error =  sysctl_int(oldp, oldlenp, newp, newlen, &inthostid);
 		hostid = inthostid;
@@ -393,6 +426,10 @@ kern_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 	case KERN_CLOCKRATE:
 		return (sysctl_clockrate(oldp, oldlenp, newp));
 	case KERN_BOOTTIME: {
+		if (p->p_p->zone_id != 0) {
+			return (sysctl_rdstruct(oldp, oldlenp, newp,
+			    zentry->boottime, sizeof(zentry->boottime)));
+		}
 		struct timeval bt;
 		memset(&bt, 0, sizeof bt);
 		microboottime(&bt);
@@ -600,7 +637,7 @@ kern_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		    newp, newlen));
 #endif
 	case KERN_MAXCLUSTERS: {
-		if (p->p_p->zone_id != 0) {
+		if (p->p_p->zone_id != 0 && newp) {
 			return (EPERM);
 		}
 		int val = nmbclust;
@@ -625,7 +662,7 @@ kern_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 	case KERN_CACHEPCT: {
 		u_int64_t dmapages;
 		int opct, pgs;
-		if (p->p_p->zone_id != 0) {
+		if (p->p_p->zone_id != 0 && newp) {
 			return (EPERM);
 		}
 		opct = bufcachepercent;
@@ -657,7 +694,7 @@ kern_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		return (sysctl_rdint(oldp, oldlenp, newp, net_livelocks));
 	case KERN_POOL_DEBUG: {
 		int old_pool_debug = pool_debug;
-		if (p->p_p->zone_id != 0) {
+		if (p->p_p->zone_id != 0 && newp) {
 			return (EPERM);
 		}
 		error = sysctl_int(oldp, oldlenp, newp, newlen,
@@ -1417,6 +1454,11 @@ sysctl_file(int *name, u_int namelen, char *where, size_t *sizep,
 		}
 		matched = 0;
 		LIST_FOREACH(pr, &allprocess, ps_list) {
+			/* Filter zones */
+			if (p->p_p->zone_id != 0
+			    && pr->zone_id != p->p_p->zone_id) {
+				continue;
+			}
 			/*
 			 * skip system, exiting, embryonic and undead
 			 * processes
@@ -1535,10 +1577,10 @@ again:
 	for (; pr != NULL; pr = LIST_NEXT(pr, ps_list)) {
 
 		/* Filter zones */
-		// if (current->p_p->zone_id != 0
-		//     && pr->zone_id != current->p_p->zone_id) {
-		// 	continue;
-		// }
+		if (current->p_p->zone_id != 0
+		    && pr->zone_id != current->p_p->zone_id) {
+			continue;
+		}
 
 		/* XXX skip processes in the middle of being zapped */
 		if (pr->ps_pgrp == NULL)
