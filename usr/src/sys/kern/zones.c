@@ -57,7 +57,7 @@ zoneid_t
 get_next_available_id(void)
 {
 	struct zone_entry *zentry;
-	int temp, n;
+	int temp, n, i, j;
 	int *ids;
 
 	if (queue_size < 2) {
@@ -75,8 +75,8 @@ get_next_available_id(void)
 	}
 	rw_exit_read(&zone_lock);
 
-	for (int i = 0; i < n; i++) {
-		for (int j = 0; j < n; j++) {
+	for (i = 0; i < n; i++) {
+		for (j = 0; j < n; j++) {
 			if (ids[i] < ids[j]) {
 				temp = ids[i];
 				ids[i] = ids[j];
@@ -85,7 +85,7 @@ get_next_available_id(void)
 		}
 	}
 
-	for (int i = 1; i < n; i++) {
+	for (i = 1; i < n; i++) {
 		if (ids[i] - ids[i - 1] != 1) {
 			free(ids, M_TEMP, sizeof(int) * (queue_size));
 			return (i);
@@ -142,15 +142,17 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 
 	struct zone_entry *zentry;
 	const char *zname;
+	char zname_in[MAXZONENAMELEN];
 	size_t zname_len;
+	int error;
 
 	*retval = -1;
 	zname = SCARG(uap, zonename);
-	zname_len = strlen(zname);
 
+	/* EFAULT zonename points to a bad address */
 	/* ENAMETOOLONG the name of the zone exceeds MAXZONENAMELEN */
-	if (zname_len > MAXZONENAMELEN) {
-		return (ENAMETOOLONG);
+	if ((error = copyinstr(zname, zname_in, MAXZONENAMELEN, &zname_len))) {
+		return (error);
 	}
 
 	/* EINVAL the name of the zone contains invalid characters */
@@ -181,8 +183,8 @@ sys_zone_create(struct proc *p, void *v, register_t *retval)
 	zentry->boottime = malloc(sizeof(struct timeval), M_PROC, M_WAITOK);
 	microtime(zentry->boottime);
 
-	if (copyinstr(zname, zentry->zname, zname_len + 1, NULL)
-	    || copyinstr(zname, zentry->hostname, zname_len + 1, NULL)) {
+	if (copyinstr(zname, zentry->zname, zname_len, NULL)
+	    || copyinstr(zname, zentry->hostname, zname_len, NULL)) {
 		free(zentry, M_PROC, sizeof(struct zone_entry));
 		return (EFAULT);
 	}
@@ -411,26 +413,21 @@ sys_zone_lookup(struct proc *p, void *v, register_t *retval)
 	const char *zname_in;
 	char zname[MAXZONENAMELEN];
 	size_t zname_len;
+	int error;
 	*retval = -1;
 
 	zname_in = SCARG(uap, name);
 
-	/* Process ID returned if name is NULL */
+	/* Zone ID returned if name is NULL */
 	if (zname_in == NULL) {
-		*retval = p->p_p->ps_pid;
+		*retval = p->p_p->zone_id;
 		return (0);
 	}
 
-	zname_len = strlen(zname_in);
-
-	/* ENAMETOOLONG the name of the zone exceeds MAXZONENAMELEN */
-	if (zname_len > MAXZONENAMELEN) {
-		return (ENAMETOOLONG);
-	}
-
 	/* EFAULT name refers to a bad memory address */
-	if (copyinstr(zname_in, zname, zname_len + 1, NULL)) {
-		return (EFAULT);
+	/* ENAMETOOLONG the name of the zone exceeds MAXZONENAMELEN */
+	if ((error = copyinstr(zname_in, zname, MAXZONENAMELEN, &zname_len))) {
+		return (error);
 	}
 
 	if (strcmp(zname, "global") == 0 && in_global_zone(p)) {
